@@ -1,0 +1,534 @@
+#! /bin/bash
+# vim :set ft=bash:
+
+# Author: Wolfgang Resch
+
+set -e
+
+################################################################################
+#                                Configuration                                 #
+################################################################################
+#soc_sparkdir=/data/$USER/.spark-on-biowulf
+soc_sparkdir=./x
+soc_sparkver=2.1.1
+
+################################################################################
+#                                   Globals                                    #
+################################################################################
+soc_tred=$(tput setaf 1)
+soc_tgreen=$(tput setaf 2)
+soc_tyellow=$(tput setaf 3)
+soc_trst=$(tput sgr0)
+
+soc_script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+soc_script="${soc_script_dir}/$(basename ${BASH_SOURCE[0]})"
+
+################################################################################
+#                               Helper functions                               #
+################################################################################
+function usage {
+    cat <<EOF
+NAME
+        spark - administer spark clusters on compute nodes
+
+SYNOPSIS
+        spark cmd [options]
+
+COMMANDS
+        help   - show this help or help for specific cmd
+        start  - start a new spark cluster 
+        list   - list clusters
+        show   - show cluster details
+        stop   - shut down a cluster
+        clean  - clean up the directory where cluster
+                 info is stored (${soc_sparkdir})
+
+DESCRIPTION
+        This tool is used to start, stop, monitor, and
+        use spark clusters running on compute nodes. 
+EOF
+}
+
+function info {
+    printf "${soc_tgreen}%4s:${soc_trst} $@\n" INFO
+}
+function warn {
+    printf "${soc_tyellow}%4s:${soc_trst} $@\n" WARN
+}
+function error {
+    printf "${soc_tred}%4s:${soc_trst} $@\n" ERR
+}
+function prop {
+    printf "%20s: %s\n" "$1" "$2" >> "$3"
+}
+
+# extract first chunk from a file delimted by a marker string
+function file_chunk {
+    local marker="$1"
+    local file="$2"
+    awk "/${marker}/ {if (p==1) {exit} else {p=1;next}} p {print}" "${file}"
+}
+
+# parse help for a function
+function help_func {
+    local func_name="${1^^}"
+    file_chunk "^#__${1^^}__" "${soc_script}" | sed 's/^# //;s/^#//'
+}
+
+# check time format and limits
+function check_time {
+    local timestr="$1"
+    if [[ "${timestr}" =~ [[:digit:]]+ ]]; then
+        if [[ ${timestr} -lt 10 ]]; then
+            error "runtime for a cluster has to be at least 10 minutes"
+            exit 1
+        fi
+    else
+        error "'${timestr}' is not a valid time format. Please provide time limit in minutes"
+    fi
+}
+            
+
+################################################################################
+#                                   Commands                                   #
+################################################################################
+
+#__START__
+# NAME
+#       spark start - start new spark cluster
+#
+# SYNOPSIS
+#       spark start [options] nnodes
+#
+# DESCRIPTION
+#       Provisions a new spark cluster with <nnodes> 32 CPU nodes
+#
+#       -t    max runtime for the cluster in minutes. Minimum is
+#             10. Default is 30. Actual runtime of the cluster
+#             is slightly less to allow for startup and clean
+#             shutdown
+#__START__
+function start {
+    local soc_time=30
+    local opt
+    while getopts ':t:' opt; do
+        case ${opt} in
+            t) 
+                soc_time="${OPTARG}"
+                ;;
+            ?)
+                error "-${OPTARG} is not a valid option"
+                exit 1
+                ;;
+            :)
+                error "-${OPTARG} requires an argument"
+                exit 1
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+    if [[ $# -ne 1 ]]; then
+        help_func start
+        exit 1
+    fi
+    check_time "${soc_time}"
+    local soc_nnodes=$1
+
+    [[ -d "${soc_sparkdir}" ]] || mkdir "${soc_sparkdir}"
+    local cluster=$(mktemp -d "${soc_sparkdir}/XXXXXX")
+    local cluster_id="$(basename ${cluster})"
+    local soc_prop="${cluster}/prop"
+    local job_id
+    mkdir "${cluster}/logs"
+
+
+    prop "nodes" "${soc_nnodes}" "${soc_prop}"
+    prop "max_time" "${soc_time}" "${soc_prop}"
+    prop "spark" "${soc_sparkver}" "${soc_prop}"
+    
+    file_chunk '^#__SBATCH__' "${soc_script}" \
+        | sed "s/<SOC_NNODES>/${soc_nnodes}/g" \
+        | sed "s/<SOC_TIME>/${soc_time}/g" \
+        | sed "s:<SOC_SPARKLOGDIR>:${cluster}/logs:g" \
+        | sed "s/<SOC_SPARKVER>/${soc_sparkver}/g" \
+        | sed "s:<SOC_PROP>:${soc_prop}:g" \
+        > "${cluster}/jobscript.sh"
+    job_id=$(sbatch "${cluster}/jobscript.sh")
+    echo "${job_id}" > "${cluster}/slurm_job_id"
+    prop "job_id" "${job_id}" "${soc_prop}"
+
+    info "Submitted job for cluster ${cluster_id}"    
+}
+
+#__SHOW__
+# NAME
+#       spark show - information about cluster
+#
+# SYNOPSIS
+#       spark show cluster_id
+#
+# DESCRIPTION
+#       Show information about cluster. Cluster_id
+#       does not have to be the full id of a cluster.
+#       A unique prefix is sufficient.
+#
+#__SHOW__
+function show {
+    if [[ $# -ne 1 ]]; then
+        help_func show
+        exit 1
+    fi
+    local show_id="$1"
+    
+    local cluster_id
+    local cluster
+    for cluster_id in $( ls -tr ${soc_sparkdir} ) ; do
+        cluster="${soc_sparkdir}/${cluster_id}"
+        if [[ "${cluster_id}" =~ ^${show_id} ]]; then
+            cat "${cluster}/prop"
+        fi
+    done
+
+}
+
+#__LIST__
+# NAME
+#       spark list - list spark clusters
+#
+# SYNOPSIS
+#       spark list [options]
+#
+# DESCRIPTION
+#       List spark clusters
+#
+#       -i    Include inactive clusters
+#       -d    Show detail
+#__LIST__
+function list {
+    local opt
+    local show_finished=false
+    local show_detail=false
+    while getopts ':id' opt; do
+        case ${opt} in
+            i) 
+                show_finished=true
+                ;;
+            d)
+                show_detail=true
+                ;;
+        esac
+    done
+    if [[ ! -d "${soc_sparkdir}" ]]; then
+        warn "${soc_sparkdir} directory does not exist yet. Creating it now"
+        mkdir "${soc_sparkdir}"
+    fi
+    local cluster_id
+    local cluster
+    local job_id
+    local job_state
+    printf "%10s %12s %20s\n" "Cluster id" "Slurm jobid" "state"
+    printf "%10s\t%12s\t%20s\n" "" "" "" | tr ' \t' '- '
+    for cluster_id in $( ls -tr ${soc_sparkdir} ) ; do
+        cluster="${soc_sparkdir}/${cluster_id}"
+        if [[ ! -d "${cluster}" ]]; then
+            continue
+        elif [[ -f "${cluster}/slurm_job_id" ]]; then
+            job_id=$(cat "${cluster}/slurm_job_id")
+            if [[ ${job_id} =~ [[:digit:]]+ ]]; then
+                job_state=$(sacct -j ${job_id} -PXn -o state)
+                if [[ "${job_state}" == "" ]]; then
+                    job_state="JOB_NOT_IN_SLURMDB"
+                fi
+            else
+                job_id=0
+                job_state="BAD_JOB_ID"
+            fi
+            if [[ "${job_state}" =~ PENDING|CONFIGURING|RUNNING|COMPLETING \
+                  || ${show_finished} == true ]]; then
+                printf "%10s %12i %20s\n" "${cluster_id}" "${job_id}" "${job_state}"
+                if [[ ${show_detail} == true ]]; then
+                    show "${cluster_id}"
+                fi
+            fi
+        fi
+    done
+}
+#__STOP__
+# NAME
+#       spark stop - stop active cluster
+#
+# SYNOPSIS
+#       spark stop cluster_id
+#
+# DESCRIPTION
+#       Stop active cluster. If the cluster job is pending,
+#       it's canceled. If it's running, it's shut down. Cluster_id
+#       can be a unique prefix of the full cluster id
+#__STOP__
+function stop {
+    if [[ $# -ne 1 ]]; then
+        help_func stop
+        exit 1
+    fi
+    local stop_id="$1"
+
+    local cluster_id
+    local cluster
+    local job_id
+    local job_state
+    for cluster_id in $( ls -tr ${soc_sparkdir} ) ; do
+        if [[ "${cluster_id}" =~ ^${stop_id} ]]; then
+            cluster="${soc_sparkdir}/${cluster_id}"
+            if [[ ! -d "${cluster}" ]]; then
+                error "'${stop_id}' is not a valid cluster"
+                exit 1
+            elif [[ -f "${cluster}/slurm_job_id" ]]; then
+                job_id=$(cat "${cluster}/slurm_job_id")
+                if [[ ${job_id} =~ [[:digit:]]+ ]]; then
+                    job_state=$(sacct -j ${job_id} -PXn -o state)
+                    if [[ "${job_state}" == "" ]]; then
+                        warn "'${cluster_id}' points to a non-existent jobid '${job_id}'"
+                        exit
+                    fi
+                else
+                    error "'${cluster_id}' does not have a valid jobid"
+                    exit 1
+                fi
+                case "${job_state}" in
+                    PENDING|CONFIGURING)
+                        info "Canceling ${job_id}"
+                        scancel ${job_id}
+                        ;;
+                    RUNNING)
+                        info "Sending cluster ${cluster_id}/${job_id} shutdown signal"
+                        info "May take a couple of minutes to shut down cleanly"
+                        scancel --signal USR1 --batch ${job_id}
+                        ;;
+                esac
+            fi
+        fi
+    done
+}
+
+#__CLEAN__
+# NAME
+#       spark clean - clean the spark cluster dir
+#
+# SYNOPSIS
+#       spark clean
+#
+# DESCRIPTION
+#       This tool stores information about active and
+#       inactive clusters in a central directory. Clean
+#       will remove all historic data from inactive 
+#       clusters.
+#
+#__CLEAN__
+function clean {
+    if [[ ! -d "${soc_sparkdir}" ]]; then
+        warn "${soc_sparkdir} directory does not exist yet. Creating it now"
+        mkdir "${soc_sparkdir}"
+    else
+        local cluster
+        local cluster_id
+        local job_id
+        local job_state
+        local keep
+        for cluster_id in $( ls ${soc_sparkdir} ) ; do
+            keep=true
+            cluster="${soc_sparkdir}/${cluster_id}"
+            if [[ ! -d "${cluster}" ]]; then
+                keep=false
+            elif [[ -f "${cluster}/slurm_job_id" ]]; then
+                job_id=$(cat "${cluster}/slurm_job_id")
+                if [[ ${job_id} =~ [[:digit:]]+ ]]; then
+                    job_state=$(sacct -j ${job_id} -PXn -o state)
+                   [[ "${job_state}" =~ PENDING|CONFIGURING|RUNNING|COMPLETING ]] || keep=false
+                else
+                    keep=false
+                fi
+            else
+                keep=false
+            fi
+            if [[ ${keep} == false ]]; then
+                info "removing metadata for cluster ${cluster_id}"
+                rm -rf "${cluster}"
+            fi
+        done
+    fi
+}
+
+
+################################################################################
+#                                     Main                                     #
+################################################################################
+
+cmd="${1:-none}"
+[[ "${cmd}" != "none" ]] && shift
+
+case "${cmd}" in
+    none)
+        usage
+        exit 1
+        ;;
+    help)
+        if [[ "${1:-none}" == "none" ]]; then
+            usage
+        elif [[ "$1" =~ start|list|stop|clean ]]; then
+            help_func "$1"
+        else
+            printf "'$1' is not a command"
+            usage
+            exit 1
+        fi
+        exit 0
+        ;;
+    start|list|stop|clean|show)
+        "${cmd}" "$@"
+        exit $?
+        ;;
+    *)
+        error "'${cmd}' is not a valid command"
+        ;;
+esac
+    
+
+exit
+
+################################################################################
+#                            Batch script template                             #
+################################################################################
+
+#__SBATCH__
+#! /bin/bash
+#SBATCH --constraint=cpu32,g64
+#SBATCH --nodes=<SOC_NNODES>
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem-per-cpu=1850
+#SBATCH --time=<SOC_TIME>
+#SBATCH --partition=multinode
+#SBATCH --gres=lscratch:750
+#SBATCH --out=<SOC_SPARKLOGDIR>/slurm.log
+#SBATCH --signal=B:USR1@180
+
+ulimit -u 16384 -n 16384
+
+# function for writing to the properties file
+function prop {
+    printf "%20s: %s\n" "$1" "$2" >> <SOC_PROP>
+}
+
+function shutdown_cluster {
+    echo "RECEIVED SHUTDOWN SIGNAL"
+    # stop slaves - srun passes signal on the processes it controls
+    if [[ ${srun_pid:-none} != "none" ]]; then
+        kill -TERM ${srun_pid}
+        sleep 30
+    fi
+
+    # stop master
+    stop-master.sh
+
+    # copy log files back to shared space
+    cat > /tmp/soc_copy_logs.sh <<EOF
+#! /bin/bash
+cp -r ${SCRATCH}/logs/* <SOC_SPARKLOGDIR>
+EOF
+    chmod +x /tmp/soc_copy_logs.sh
+    sbcast /tmp/soc_copy_logs.sh /lscratch/${SLURM_JOB_ID}/copy_logs.sh
+
+    srun /lscratch/${SLURM_JOB_ID}/copy_logs.sh
+    rm /tmp/soc_copy_logs.sh
+
+    prop "DONE" "$(date +'%F %T')"
+    exit
+}
+
+# shut down cluster in response to SIGUSR1
+trap 'shutdown_cluster' SIGUSR1
+
+
+prop "START" "$(date +'%F %T')"
+module load spark/<SOC_SPARKVER>
+
+
+###
+### configuration files
+###
+
+# Set up lscratch directories on all the nodes
+export SCRATCH="/lscratch/${SLURM_JOBID}"
+export SPARK_CONF_DIR="${SCRATCH}/conf"
+srun mkdir "${SPARK_CONF_DIR}"
+srun mkdir "${SCRATCH}/logs"
+srun mkdir "${SCRATCH}/work"
+srun mkdir "${SCRATCH}/local"
+srun mkdir "${SCRATCH}/pid"
+
+# slave node list - includes the batch host
+prop "nodelist" "${SLURM_JOB_NODELIST}"
+nodelist="$(scontrol show hostname ${SLURM_JOB_NODELIST})"
+echo ${nodelist} | tr -s ' ' '\n' > "${SPARK_CONF_DIR}/slaves"
+
+# master uris
+export SPARK_MASTER_WEBUI_PORT=8080
+export SPARK_MASTER_HOST="$( hostname -f )"
+export SPARK_MASTER_PORT=7077
+master="spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
+master_webui="http://${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT}"
+
+prop "master" "${master}"
+prop "master_webui" "${master_webui}"
+prop "webui tunnel" "ssh -L 55555:${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT} -N biowulf.nih.gov"
+
+# create temp config file
+# NOTE: SPARK_WORKER_INSTANCES IS DEPRECATED
+cat > "/tmp/spark-env.sh" <<EOF 
+SPARK_WORKER_CORES=30
+SPARK_WORKER_MEMORY=50g
+SPARK_WORKER_DIR=/lscratch/${SLURM_JOB_ID}/work
+SPARK_LOCAL_DIRS=/lscratch/${SLURM_JOB_ID}/local
+SPARK_DAEMON_MEMORY=1g
+SPARK_CONF_DIR=${SLURM_CONF_DIR}
+SPARK_LOG_DIR=/lscratch/${SLURM_JOB_ID}/logs
+SPARK_PID_DIR=/lscratch/${SLURM_JOB_ID}/pid
+
+SPARK_MASTER_WEBUI_PORT=${SPARK_MASTER_WEBUI_PORT}
+SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
+SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
+EOF
+
+# broadcast config file to each node
+sbcast /tmp/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh
+
+# modify the local copy of the config file to use fewer resources
+sed -i 's/SPARK_WORKER_CORES=30/SPARK_WORKER_CORES=24/; 
+        s/SPARK_WORKER_MEMORY=50g/SPARK_WORKER_MEMORY=40g/' \
+    "${SPARK_CONF_DIR}/spark-env.sh"
+
+# create a starter script for non-daemonized spark workers
+cat > /tmp/sparkworker.sh <<EOF
+#! /bin/bash
+ulimit -u 16384 -n 16384
+export SPARK_CONF_DIR=${SPARK_CONF_DIR}
+
+logf="${SCRATCH}/logs/spark-worker-\$(hostname).out"
+exec spark-class org.apache.spark.deploy.worker.Worker "${master}" &> "\${logf}"
+EOF
+chmod +x /tmp/sparkworker.sh
+sbcast /tmp/sparkworker.sh "${SCRATCH}/sparkworker.sh"
+
+# start master
+start-master.sh
+sleep 30
+
+# start slaves with srun; save pid so we can terminate the workers
+srun "${SCRATCH}/sparkworker.sh" &
+srun_pid=$!
+
+# wait is interrupted by USR signals - sleep is not!
+# trapping SIGUSR1 is used to shut down cleanly
+wait ${srun_pid}
+
+#__SBATCH__
