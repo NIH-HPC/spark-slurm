@@ -6,13 +6,9 @@ on top of Slurm.
 The follwing was run in an sinteractive session so that the spark shell (or
 pyspark in my case) didn't itself run on the login node:
 
-```bash
-module load spark/2.1.1
 ```
-```bash
-spark
-```
-```
+$ module load spark/2.1.1
+$ spark
 NAME
         spark - administer spark clusters on compute nodes
 
@@ -34,28 +30,22 @@ DESCRIPTION
 ```
 
 Start a cluster with 3 nodes and a max runtime of 120 minutes:
-```bash
-spark start -t 120 3
 ```
-```
+$ spark start -t 120 3
 INFO: Submitted job for cluster RjHxpj
 ```
 
 List your currently active spark clusters
-```bash
-spark list
 ```
-```
+$ spark list
 Cluster id  Slurm jobid                state
 ---------- ------------ --------------------
     RjHxpj     43451296              RUNNING
 ```
 
 With more detail
-```bash
-spark list -d
 ```
-```
+$ spark list -d
 Cluster id  Slurm jobid                state
 ---------- ------------ --------------------
     RjHxpj     43451296              RUNNING
@@ -83,10 +73,8 @@ browser and point it to 'localhost:55555' to see the spark web ui.
 
 
 Connect to the cluster with pyspark
-```bash
-pyspark --master spark://cn0443:7077
 ```
-```
+$ pyspark --master spark://cn0443:7077
 Welcome to
      ____              __
     / __/__  ___ _____/ /__
@@ -110,40 +98,34 @@ u'#define SQLITE_CORE 1'
 ```
 
 spark-submit the pi example
-```bash
-spark-submit \
+```
+$ spark-submit \
     --driver-memory=3g \
     --master "spark://cn0443:7077" \
     --deploy-mode client \
     --executor-cores=2 \
     --executor-memory=3g \
     ./pi.py
-```
-```
+
 [...snip...]
 /pi.py:36, took 562.603120 s
 PI=3.141584232000           
 ```
 
 Shut down the cluster
-```bash
-spark stop Rj
 ```
-```
+$ spark stop Rj
 INFO: Sending cluster RjHxpj/43451296 shutdown signal
 INFO: May take a couple of minutes to shut down cleanly
-```
-```bash
-spark list
+
+$ spark list
 Cluster id  Slurm jobid                state
 ---------- ------------ --------------------
 ```
 
 Include inactive clusters in the output
-```bash
-spark list -di
 ```
-```
+$ spark list -di
 Cluster id  Slurm jobid                state
 ---------- ------------ --------------------
     RjHxpj     43451296            COMPLETED
@@ -160,7 +142,7 @@ Cluster id  Slurm jobid                state
 ```
 
 Clean up the spark directory
-```bash
-spark clean
+```
+$ spark clean
 ```
 
