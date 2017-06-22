@@ -8,8 +8,15 @@ set -e
 ################################################################################
 #                                Configuration                                 #
 ################################################################################
-#soc_sparkdir=/data/$USER/.spark-on-biowulf
+# The directory used to keep information about active (pending or running)
+# and inactive (finshed, failed) clusters. Something like /data/$USER/.spark
 soc_sparkdir=./x
+
+# The headnode of the cluster. Used to construct the command for setting
+# up an ssh tunnel to the spark master's web ui
+soc_headnode=x.x.x
+
+# Spark version to use. Assumes that a 'module load' command is available
 soc_sparkver=2.1.1
 
 ################################################################################
@@ -101,7 +108,7 @@ function check_time {
 #       spark start [options] nnodes
 #
 # DESCRIPTION
-#       Provisions a new spark cluster with <nnodes> 32 CPU nodes
+#       Provisions a new spark cluster with <nnodes> nodes
 #
 #       -t    max runtime for the cluster in minutes. Minimum is
 #             10. Default is 30. Actual runtime of the cluster
@@ -156,8 +163,7 @@ function start {
     job_id=$(sbatch "${cluster}/jobscript.sh")
     echo "${job_id}" > "${cluster}/slurm_job_id"
     prop "job_id" "${job_id}" "${soc_prop}"
-
-    info "Submitted job for cluster ${cluster_id}"    
+    info "Submitted job for cluster ${cluster_id}"
 }
 
 #__SHOW__
@@ -441,7 +447,7 @@ EOF
     srun /lscratch/${SLURM_JOB_ID}/copy_logs.sh
     rm /tmp/soc_copy_logs.sh
 
-    prop "DONE" "$(date +'%F %T')"
+    prop "stop" "$(date +'%F %T')"
     exit
 }
 
@@ -449,7 +455,7 @@ EOF
 trap 'shutdown_cluster' SIGUSR1
 
 
-prop "START" "$(date +'%F %T')"
+prop "start" "$(date +'%F %T')"
 module load spark/<SOC_SPARKVER>
 
 
@@ -480,7 +486,7 @@ master_webui="http://${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT}"
 
 prop "master" "${master}"
 prop "master_webui" "${master_webui}"
-prop "webui tunnel" "ssh -L 55555:${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT} -N biowulf.nih.gov"
+prop "tunnel" "ssh -L ${SPARK_MASTER_WEBUI_PORT}:${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT} -N ${soc_headnode}"
 
 # create temp config file
 # NOTE: SPARK_WORKER_INSTANCES IS DEPRECATED
