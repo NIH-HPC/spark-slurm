@@ -450,6 +450,11 @@ function prop {
     printf "%20s: %s\n" "$1" "$2" >> <SOC_PROP>
 }
 
+function fail {
+    echo "ERROR: $@"
+    exit 1
+}
+
 function shutdown_cluster {
     echo "RECEIVED SHUTDOWN SIGNAL"
     # stop slaves - srun passes signal on the processes it controls
@@ -476,33 +481,29 @@ EOF
     exit
 }
 
-# shut down cluster in response to SIGUSR1
-trap 'shutdown_cluster' SIGUSR1
-
-
 prop "start" "$(date +'%F %T')"
-module load spark/<SOC_SPARKVER>
-
+module load spark/<SOC_SPARKVER> || fail "Could not load spark module"
 
 ###
-### configuration files
+### configuration files and job setup
 ###
 
-# Set up lscratch directories on all the nodes
+# Set up node local scratch directories on all the nodes
 export SCRATCH="/lscratch/${SLURM_JOBID}"
 export SPARK_CONF_DIR="${SCRATCH}/conf"
-srun mkdir "${SPARK_CONF_DIR}"
-srun mkdir "${SCRATCH}/logs"
-srun mkdir "${SCRATCH}/work"
-srun mkdir "${SCRATCH}/local"
-srun mkdir "${SCRATCH}/pid"
+srun mkdir "${SPARK_CONF_DIR}" \
+    && srun mkdir "${SCRATCH}/logs" \
+    && srun mkdir "${SCRATCH}/work" \
+    && srun mkdir "${SCRATCH}/local" \
+    && srun mkdir "${SCRATCH}/pid" \
+    || fail "Could not set up directories correctly"
 
 # slave node list - includes the batch host
 prop "nodelist" "${SLURM_JOB_NODELIST}"
 nodelist="$(scontrol show hostname ${SLURM_JOB_NODELIST})"
 echo ${nodelist} | tr -s ' ' '\n' > "${SPARK_CONF_DIR}/slaves"
 
-# master uris
+# URIs
 export SPARK_MASTER_WEBUI_PORT=8080
 export SPARK_MASTER_HOST="$( hostname -f )"
 export SPARK_MASTER_PORT=7077
@@ -513,25 +514,25 @@ prop "master" "${master}"
 prop "master_webui" "${master_webui}"
 prop "tunnel" "ssh -L ${SPARK_MASTER_WEBUI_PORT}:${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT} -N ${soc_headnode}"
 
-# create temp config file
+# create config file in tmp dir
 # NOTE: SPARK_WORKER_INSTANCES IS DEPRECATED
 cat > "/tmp/spark-env.sh" <<EOF 
 SPARK_WORKER_CORES=30
 SPARK_WORKER_MEMORY=50g
-SPARK_WORKER_DIR=/lscratch/${SLURM_JOB_ID}/work
-SPARK_LOCAL_DIRS=/lscratch/${SLURM_JOB_ID}/local
+SPARK_WORKER_DIR=${SCRATCH}/work
+SPARK_LOCAL_DIRS=${SCRATCH}/local
 SPARK_DAEMON_MEMORY=1g
 SPARK_CONF_DIR=${SLURM_CONF_DIR}
-SPARK_LOG_DIR=/lscratch/${SLURM_JOB_ID}/logs
-SPARK_PID_DIR=/lscratch/${SLURM_JOB_ID}/pid
-
+SPARK_LOG_DIR=${SCRATCH}/logs
+SPARK_PID_DIR=${SCRATCH}/pid
 SPARK_MASTER_WEBUI_PORT=${SPARK_MASTER_WEBUI_PORT}
 SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
 SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
 EOF
 
 # broadcast config file to each node
-sbcast /tmp/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh
+sbcast /tmp/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh \
+    || fail "Could not broadcast config file to nodes"
 
 # modify the local copy of the config file to use fewer resources
 sed -i 's/SPARK_WORKER_CORES=30/SPARK_WORKER_CORES=24/; 
@@ -547,19 +548,29 @@ export SPARK_CONF_DIR=${SPARK_CONF_DIR}
 logf="${SCRATCH}/logs/spark-worker-\$(hostname).out"
 exec spark-class org.apache.spark.deploy.worker.Worker "${master}" &> "\${logf}"
 EOF
+
 chmod +x /tmp/sparkworker.sh
-sbcast /tmp/sparkworker.sh "${SCRATCH}/sparkworker.sh"
+sbcast /tmp/sparkworker.sh "${SCRATCH}/sparkworker.sh" \
+    || fail "Could not broadcast worker start scrip to nodes"
+
+###
+### Starting up the cluster
+###
+
+# shut down cluster in response to SIGUSR1
+trap 'shutdown_cluster' SIGUSR1
 
 # start master
-start-master.sh
+start-master.sh \
+    || fail "Master did not start"
 sleep 30
 
 # start slaves with srun; save pid so we can terminate the workers
-srun "${SCRATCH}/sparkworker.sh" &
+srun --label --wait=0 "${SCRATCH}/sparkworker.sh" &
 srun_pid=$!
 
 # wait is interrupted by USR signals - sleep is not!
 # trapping SIGUSR1 is used to shut down cleanly
-wait ${srun_pid}
+wait ${srun_pid} || fail "Error starting workers"
 
 #__SBATCH__
