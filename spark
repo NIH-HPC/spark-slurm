@@ -489,14 +489,14 @@ module load spark/<SOC_SPARKVER> || fail "Could not load spark module"
 ###
 
 # Set up node local scratch directories on all the nodes
-export SCRATCH="/lscratch/${SLURM_JOBID}"
+export SCRATCH="/lscratch/${SLURM_JOB_ID}"
 export SPARK_CONF_DIR="${SCRATCH}/conf"
-srun mkdir "${SPARK_CONF_DIR}" \
-    && srun mkdir "${SCRATCH}/logs" \
-    && srun mkdir "${SCRATCH}/work" \
-    && srun mkdir "${SCRATCH}/local" \
-    && srun mkdir "${SCRATCH}/pid" \
-    || fail "Could not set up directories correctly"
+srun -l mkdir "${SPARK_CONF_DIR}" \
+    && srun -l mkdir "${SCRATCH}/logs" \
+    && srun -l mkdir "${SCRATCH}/work" \
+    && srun -l mkdir "${SCRATCH}/local" \
+    && srun -l mkdir "${SCRATCH}/pid" \
+    || fail "Could not set up node local directories"
 
 # slave node list - includes the batch host
 prop "nodelist" "${SLURM_JOB_NODELIST}"
