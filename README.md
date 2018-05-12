@@ -1,5 +1,10 @@
 The `spark` tool is a convenience wrapper for running spark clusters
-on top of Slurm.
+on top of Slurm. Note that this script is still experimental. In addition it
+will require modification to work on different clusters:
+  - change the settings in the 'Configuration' section
+  - change the sbatch template script at the end of 'spark' to reflect
+    the nodes/partition/memory/cpu configuration of the target slurm
+    cluster.
 
 # Walkthrough
 
@@ -57,7 +62,7 @@ Cluster id  Slurm jobid                state
             nodelist: cn[0443-0444]
               master: spark://cn0443:7077
         master_webui: http://cn0443:8080
-        webui tunnel: ssh -L 55555:cn0443:8080 -N biowulf.nih.gov
+        webui tunnel: ssh -L 55555:cn0443:8080 -N x.x.x
 ```
 
 As you can see there is a ssh command that will set up a tunnel
@@ -72,9 +77,9 @@ Next, on your local machine (or your helix nx session), open up a
 browser and point it to 'localhost:55555' to see the spark web ui.
 
 
-Connect to the cluster with pyspark
+Connect to the cluster with pyspark using one executor per node.
 ```
-$ pyspark --master spark://cn0443:7077
+$ pyspark --master spark://cn0443:7077 --executor-memory=40g
 Welcome to
      ____              __
     / __/__  ___ _____/ /__
@@ -97,7 +102,7 @@ u'#define SQLITE_CORE 1'
 >>> Ctrl-D
 ```
 
-spark-submit the pi example
+spark-submit the pi example with multiple executors per node
 ```
 $ spark-submit \
     --driver-memory=3g \
