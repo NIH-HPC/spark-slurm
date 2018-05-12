@@ -66,18 +66,13 @@ Cluster id  Slurm jobid                state
 ```
 
 As you can see there is a ssh command that will set up a tunnel
-between your local machine, and the spark cluster. Execute that
-command in a terminal on your desktop if you have an os x or
-linux machine.
-If you have a windows box, you can eithe use putty to set up the
-port forwarding or you can use NX to connect to helix and then use that
-command in your nx session.
-
-Next, on your local machine (or your helix nx session), open up a
-browser and point it to 'localhost:55555' to see the spark web ui.
+between your local machine, and the spark cluster if you want
+to see the spark master's web ui.
 
 
-Connect to the cluster with pyspark using one executor per node.
+Here is how you would connect to the cluster with pyspark using one executor
+per node:
+
 ```
 $ pyspark --master spark://cn0443:7077 --executor-memory=40g
 Welcome to
