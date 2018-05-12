@@ -102,6 +102,17 @@ u'#define SQLITE_CORE 1'
 >>> Ctrl-D
 ```
 
+Or if you prefere a jupyter notebook you can create a wrapper script
+like the following:
+
+```
+#! /bin/bash
+
+export PYSPARK_DRIVER_PYTHON=jupyter
+export PYSPARK_DRIVER_PYTHON_OPTS="notebook --port=3939 --no-browser"
+exec pyspark --executor-memory=40g "$@"
+```
+
 spark-submit the pi example with multiple executors per node
 ```
 $ spark-submit \
