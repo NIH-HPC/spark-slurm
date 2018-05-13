@@ -517,8 +517,8 @@ prop "tunnel" "ssh -L ${SPARK_MASTER_WEBUI_PORT}:${SPARK_MASTER_HOST}:${SPARK_MA
 # create config file in tmp dir
 # NOTE: SPARK_WORKER_INSTANCES IS DEPRECATED
 cat > "/tmp/spark-env.sh" <<EOF 
-SPARK_WORKER_CORES=52
-SPARK_WORKER_MEMORY=240g
+SPARK_WORKER_CORES=30
+SPARK_WORKER_MEMORY=54g
 SPARK_WORKER_DIR=${SCRATCH}/work
 SPARK_LOCAL_DIRS=${SCRATCH}/local
 SPARK_DAEMON_MEMORY=1g
@@ -535,8 +535,8 @@ sbcast /tmp/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh \
     || fail "Could not broadcast config file to nodes"
 
 # modify the local copy of the config file to use fewer resources
-sed -i 's/SPARK_WORKER_CORES=52/SPARK_WORKER_CORES=40/; 
-        s/SPARK_WORKER_MEMORY=240g/SPARK_WORKER_MEMORY=200g/' \
+sed -i 's/SPARK_WORKER_CORES=30/SPARK_WORKER_CORES=22/; 
+        s/SPARK_WORKER_MEMORY=54g/SPARK_WORKER_MEMORY=40g/' \
     "${SPARK_CONF_DIR}/spark-env.sh"
 
 # create a starter script for non-daemonized spark workers
