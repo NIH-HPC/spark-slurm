@@ -42,7 +42,7 @@ soc_sparkdir=./x
 soc_headnode=x.x.x
 
 # Spark version to use. Assumes that a 'module load' command is available
-soc_sparkver=2.1.1
+soc_sparkver=2.4.0
 
 ################################################################################
 #                                   Globals                                    #
@@ -135,18 +135,24 @@ function check_time {
 # DESCRIPTION
 #       Provisions a new spark cluster with <nnodes> nodes
 #
-#       -t    max runtime for the cluster in minutes. Minimum is
+#       -t M  max runtime for the cluster in minutes. Minimum is
 #             10. Default is 30. Actual runtime of the cluster
 #             is slightly less to allow for startup and clean
 #             shutdown
+#       -l    copy the spark node logs back to the spark cluster
+#             directory in shared space
 #__START__
 function start {
     local soc_time=30
+    local soc_copy_logs=0
     local opt
-    while getopts ':t:' opt; do
+    while getopts ':lt:' opt; do
         case ${opt} in
             t) 
                 soc_time="${OPTARG}"
+                ;;
+            l)
+                soc_copy_logs=1
                 ;;
             ?)
                 error "-${OPTARG} is not a valid option"
@@ -184,6 +190,7 @@ function start {
         | sed "s:<SOC_SPARKLOGDIR>:${cluster}/logs:g" \
         | sed "s/<SOC_SPARKVER>/${soc_sparkver}/g" \
         | sed "s:<SOC_PROP>:${soc_prop}:g" \
+        | sed "s:<SOC_COPY_LOGS>:${soc_copy_logs}:g" \
         > "${cluster}/jobscript.sh"
     job_id=$(sbatch "${cluster}/jobscript.sh")
     echo "${job_id}" > "${cluster}/slurm_job_id"
@@ -432,11 +439,11 @@ exit
 
 #__SBATCH__
 #! /bin/bash
-#SBATCH --constraint=cpu32,g64
+#SBATCH --constraint=cpu56,g256
 #SBATCH --nodes=<SOC_NNODES>
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem-per-cpu=1850
+#SBATCH --cpus-per-task=56
+#SBATCH --mem-per-cpu=4400
 #SBATCH --time=<SOC_TIME>
 #SBATCH --partition=multinode
 #SBATCH --gres=lscratch:380
@@ -467,15 +474,17 @@ function shutdown_cluster {
     stop-master.sh
 
     # copy log files back to shared space
-    cat > /tmp/soc_copy_logs.sh <<EOF
+    if [[ <SOC_COPY_LOGS> -eq 1 ]]; then
+        cat > /tmp/soc_copy_logs.sh <<EOF
 #! /bin/bash
 cp -r ${SCRATCH}/logs/* <SOC_SPARKLOGDIR>
 EOF
-    chmod +x /tmp/soc_copy_logs.sh
-    sbcast /tmp/soc_copy_logs.sh /lscratch/${SLURM_JOB_ID}/copy_logs.sh
+        chmod +x /tmp/soc_copy_logs.sh
+        sbcast /tmp/soc_copy_logs.sh /lscratch/${SLURM_JOB_ID}/copy_logs.sh
 
     srun /lscratch/${SLURM_JOB_ID}/copy_logs.sh
     rm /tmp/soc_copy_logs.sh
+    fi
 
     prop "stop" "$(date +'%F %T')"
     exit
@@ -517,8 +526,8 @@ prop "tunnel" "ssh -L ${SPARK_MASTER_WEBUI_PORT}:${SPARK_MASTER_HOST}:${SPARK_MA
 # create config file in tmp dir
 # NOTE: SPARK_WORKER_INSTANCES IS DEPRECATED
 cat > "/tmp/spark-env.sh" <<EOF 
-SPARK_WORKER_CORES=30
-SPARK_WORKER_MEMORY=54g
+SPARK_WORKER_CORES=52
+SPARK_WORKER_MEMORY=235g
 SPARK_WORKER_DIR=${SCRATCH}/work
 SPARK_LOCAL_DIRS=${SCRATCH}/local
 SPARK_DAEMON_MEMORY=2g
@@ -535,8 +544,8 @@ sbcast /tmp/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh \
     || fail "Could not broadcast config file to nodes"
 
 # modify the local copy of the config file to use fewer resources
-sed -i 's/SPARK_WORKER_CORES=30/SPARK_WORKER_CORES=22/; 
-        s/SPARK_WORKER_MEMORY=54g/SPARK_WORKER_MEMORY=40g/' \
+sed -i 's/SPARK_WORKER_CORES=52/SPARK_WORKER_CORES=44/; 
+        s/SPARK_WORKER_MEMORY=235g/SPARK_WORKER_MEMORY=230g/' \
     "${SPARK_CONF_DIR}/spark-env.sh"
 
 # create a starter script for non-daemonized spark workers
