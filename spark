@@ -512,10 +512,10 @@ prop "nodelist" "${SLURM_JOB_NODELIST}"
 nodelist="$(scontrol show hostname ${SLURM_JOB_NODELIST})"
 echo ${nodelist} | tr -s ' ' '\n' > "${SPARK_CONF_DIR}/slaves"
 
-# URIs
-export SPARK_MASTER_WEBUI_PORT=8080
+# URIs - find free ports on biowulf first
+export SPARK_MASTER_WEBUI_PORT=$(ssh -q biowulf-e0 '/usr/local/bin/portauthority')
 export SPARK_MASTER_HOST="$( hostname -f )"
-export SPARK_MASTER_PORT=7077
+export SPARK_MASTER_PORT=$(ssh -q biowulf-e0 '/usr/local/bin/portauthority')
 master="spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
 master_webui="http://${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT}"
 
