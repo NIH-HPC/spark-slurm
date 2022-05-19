@@ -1,0 +1,10 @@
+#! /bin/bash
+
+if [[ "${PORT1:-none}" == "none" ]] ; then
+    PORT1=$(( (RANDOM % 10000) + 2000 ))
+fi
+echo "Running on port ${PORT1} on $(hostname) listening on localhost"
+
+export PYSPARK_DRIVER_PYTHON=jupyter
+export PYSPARK_DRIVER_PYTHON_OPTS="notebook --port=${PORT1} --ip=localhost --no-browser"
+exec pyspark "$@"
