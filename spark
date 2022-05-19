@@ -42,7 +42,7 @@ soc_sparkdir=./x
 soc_headnode=x.x.x
 
 # Spark version to use. Assumes that a 'module load' command is available
-soc_sparkver=2.4.0
+soc_sparkver=ver
 
 ################################################################################
 #                                   Globals                                    #
@@ -264,8 +264,9 @@ function list {
     local cluster
     local job_id
     local job_state
-    printf "%10s %12s %20s\n" "Cluster id" "Slurm jobid" "state"
-    printf "%10s\t%12s\t%20s\n" "" "" "" | tr ' \t' '- '
+    local master
+    printf "%10s %12s %20s %26s\n" "Cluster id" "Slurm jobid" "state" "master"
+    printf "%10s %12s %20s %26s\n" "" "" "" "" | tr ' \t' '- '
     for cluster_id in $( ls -tr ${soc_sparkdir} ) ; do
         cluster="${soc_sparkdir}/${cluster_id}"
         if [[ ! -d "${cluster}" ]]; then
@@ -283,7 +284,8 @@ function list {
             fi
             if [[ "${job_state}" =~ PENDING|CONFIGURING|RUNNING|COMPLETING \
                   || ${show_finished} == true ]]; then
-                printf "%10s %12i %20s\n" "${cluster_id}" "${job_id}" "${job_state}"
+                master=$(awk '/master:/ {print $2}' "${cluster}/prop")
+                printf "%10s %12i %20s %26s\n" "${cluster_id}" "${job_id}" "${job_state}" "${master}"
                 if [[ ${show_detail} == true ]]; then
                     show "${cluster_id}"
                 fi
@@ -458,7 +460,8 @@ function prop {
 }
 
 function fail {
-    echo "ERROR: $@"
+    echo "ERROR: $*"
+    rm -f /tmp/spark* /tmp/soc_copy_logs.sh
     exit 1
 }
 
@@ -513,9 +516,16 @@ nodelist="$(scontrol show hostname ${SLURM_JOB_NODELIST})"
 echo ${nodelist} | tr -s ' ' '\n' > "${SPARK_CONF_DIR}/slaves"
 
 # URIs - find free ports on biowulf first
-export SPARK_MASTER_WEBUI_PORT=$(ssh -oStrictHostKeyChecking=no -q biowulf-e0 '/usr/local/bin/portauthority')
+export SPARK_MASTER_WEBUI_PORT
+if ! SPARK_MASTER_WEBUI_PORT=$(ssh -oStrictHostKeyChecking=no -q biowulf-e0 '/usr/local/bin/portauthority'); then
+    SPARK_MASTER_WEBUI_PORT=$(( (RANDOM % 5000) + 31986 ))
+fi
+
 export SPARK_MASTER_HOST="$( hostname -f )"
-export SPARK_MASTER_PORT=$(ssh -oStrictHostKeyChecking=no -q biowulf-e0 '/usr/local/bin/portauthority')
+export SPARK_MASTER_PORT
+if ! SPARK_MASTER_PORT=$(ssh -oStrictHostKeyChecking=no -q biowulf-e0 '/usr/local/bin/portauthority'); then
+    SPARK_MASTER_PORT=$(( (RANDOM % 5000) + 36986 ))
+fi
 master="spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
 master_webui="http://${SPARK_MASTER_HOST}:${SPARK_MASTER_WEBUI_PORT}"
 
