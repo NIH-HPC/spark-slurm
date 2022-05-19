@@ -32,6 +32,7 @@ if __name__ == "__main__":
     """
 
     sc = SparkContext(appName="PythonPi")
+    sc.setLogLevel('WARN')
     n = 1000000000
     count = sc.parallelize(xrange(1, n + 1)).filter(in_circle).count()
     print("PI=%.12f" % (4.0 * count / n))
